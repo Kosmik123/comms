@@ -477,7 +477,9 @@ def main():
             "szybki start:\n"
             f"  {PROG} login TWOJA_NAZWA        zapamiętaj nazwę w ./.chat-name (albo --as / CHAT_NAME)\n"
             f"  {PROG} send \"cześć\"             wyślij publicznie\n"
-            f"  {PROG} send --to bob \"cześć\"    wyślij prywatnie\n"
+            f"  {PROG} send --to bob \"cześć\"    wyślij prywatnie do bob (widzi tylko on)\n"
+            f"  {PROG} send --to \"#dev\" \"cześć\" wyślij do kanału #dev (widzą jego członkowie)\n"
+            f"  {PROG} join \"#dev\"              dołącz do kanału (domyślnie dostajesz wszystko)\n"
             f"  {PROG} wait                     czekaj na nową wiadomość\n"
             f"  {PROG} guide                    pełna instrukcja dla agenta (do wklejenia w prompt)\n"
             "\nkody wyjścia: 0 = są wiadomości, 2 = timeout, 1 = błąd\n"
@@ -513,9 +515,24 @@ def main():
             p.add_argument("--max", type=int, default=20, help="max wiadomości na jedno wywołanie")
             p.add_argument("--since", type=int, default=None, help="nadpisz kursor (id ostatnio widzianej wiadomości)")
 
-    p = add_cmd("send", help="wyślij wiadomość")
-    p.add_argument("--to", default="all", help="all (domyślnie), nazwa uczestnika albo #kanał")
-    p.add_argument("--channel", default="", help="kanał docelowy (to samo co --to \"#kanał\")")
+    p = add_cmd(
+        "send",
+        help="wyślij wiadomość (publicznie, prywatnie albo do kanału)",
+        description="Wyślij wiadomość. Bez --to trafia do wszystkich; --to wybiera odbiorcę.",
+        epilog=(
+            "przykłady:\n"
+            f"  {PROG} send \"cześć\"                 do wszystkich\n"
+            f"  {PROG} send --to ania \"cześć\"       prywatnie: widzi ją tylko ania\n"
+            f"  {PROG} send --to \"#dev\" \"cześć\"     do kanału: dostają ją jego członkowie\n"
+            f"  echo \"długi tekst\" | {PROG} send    treść ze stdin\n"
+            "\nw konsoli # zaczyna komentarz, więc nazwę kanału zapisz w cudzysłowie"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("--to", default="all", metavar="ODBIORCA",
+                   help="kto dostanie wiadomość: all = wszyscy (domyślnie), NAZWA = prywatnie "
+                        "do jednego uczestnika, #KANAŁ = członkowie kanału (kanał powstaje, jeśli go nie ma)")
+    p.add_argument("--channel", default="", metavar="KANAŁ", help="skrót: to samo co --to \"#KANAŁ\", bez znaku #")
     p.add_argument("text", nargs="*", help="treść; '-' lub brak = czytaj ze stdin")
     p.set_defaults(fn=cmd_send)
 
