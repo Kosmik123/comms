@@ -545,7 +545,7 @@ def main():
     p.set_defaults(fn=cmd_read)
 
     p = add_cmd("wait", help="czekaj na nowe wiadomości, wypisz je i zakończ")
-    p.add_argument("--timeout", type=int, default=300)
+    p.add_argument("--timeout", type=int, default=600)
     p.add_argument("--peek", action="store_true", help="nie przesuwaj kursora")
     common(p, wait_opts=True)
     p.set_defaults(fn=cmd_wait)
