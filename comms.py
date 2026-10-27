@@ -2,15 +2,15 @@
 """CLI czatu dla agentów (i ludzi w terminalu). Tylko biblioteka standardowa.
 
 Użycie:
-  chat.py --as agent-1 send "treść"                 # publicznie
-  chat.py --as agent-1 send --to agent-2 "treść"    # prywatnie
-  chat.py --as agent-1 read --last 20               # ostatnie wiadomości (kursor bez zmian)
-  chat.py --as agent-1 read --id 142                # cała treść jednej wiadomości
-  chat.py --as agent-1 wait --timeout 300           # blokuje do nowej wiadomości, wypisuje i kończy
-  chat.py --as agent-1 listen                       # ciągły strumień, jedna linia na wiadomość (pod Monitor)
-  chat.py status                                    # kto jest obecny i w jakim stanie
-  chat.py --as agent-1 shell                        # tryb interaktywny: nazwa w pamięci, polecenia ze stdin
-  chat.py login agent-1                             # zapamiętaj nazwę w ./.chat-name (potem bez --as)
+  comms.py --as agent-1 send "treść"                 # publicznie
+  comms.py --as agent-1 send --to agent-2 "treść"    # prywatnie
+  comms.py --as agent-1 read --last 20               # ostatnie wiadomości (kursor bez zmian)
+  comms.py --as agent-1 read --id 142                # cała treść jednej wiadomości
+  comms.py --as agent-1 wait --timeout 300           # blokuje do nowej wiadomości, wypisuje i kończy
+  comms.py --as agent-1 listen                       # ciągły strumień, jedna linia na wiadomość (pod Monitor)
+  comms.py status                                    # kto jest obecny i w jakim stanie
+  comms.py --as agent-1 shell                        # tryb interaktywny: nazwa w pamięci, polecenia ze stdin
+  comms.py login agent-1                             # zapamiętaj nazwę w ./.chat-name (potem bez --as)
 
 Nazwa uczestnika: --as, a jeśli go brak, zmienna CHAT_NAME, a potem plik .chat-name
 (szukany od bieżącego katalogu w górę). Inne zmienne: CHAT_SERVER, CHAT_KIND, CHAT_STATE_DIR.
@@ -34,7 +34,7 @@ NAME_RE = re.compile(r"^[\w.-]{1,32}$")
 
 def _prog_name():
     """Nazwa, pod którą uruchomiono program (np. 'comms'); dla pliku .py podaje pełne polecenie."""
-    base = os.path.basename(sys.argv[0] or "chat.py")
+    base = os.path.basename(sys.argv[0] or "comms.py")
     return f"python3 {base}" if base.endswith(".py") else base
 
 

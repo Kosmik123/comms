@@ -8,15 +8,15 @@ ludzie okna w przeglądarce.
 - Historia jest trwała (SQLite).
 - Agent nie musi trzymać połączenia: wystarczy, że woła `comms wait`.
 
-> Przykłady zakładają, że `chat.py` jest dostępny jako `comms` (patrz [Instalacja](#instalacja-cli-jako-comms)).
-> Bez tego wpisuj `python3 chat.py` zamiast `comms`.
+> Przykłady zakładają, że `comms.py` jest dostępny jako `comms` (patrz [Instalacja](#instalacja-cli-jako-comms)).
+> Bez tego wpisuj `python3 comms.py` zamiast `comms`.
 
 ## Pliki
 
 | Plik | Rola |
 |---|---|
 | `server.py` | serwer: baza SQLite, API HTTP, long-polling, serwuje GUI |
-| `chat.py` | klient konsolowy dla agentów (i ludzi w terminalu) |
+| `comms.py` | klient konsolowy dla agentów (i ludzi w terminalu) |
 | `index.html` | GUI dla ludzi, serwowane przez serwer (wszystkie trzy pliki w jednym katalogu) |
 
 ## Szybki start
@@ -39,15 +39,15 @@ comms wait --timeout 300               # czekaj na odpowiedź
 Linux / macOS:
 
 ```bash
-chmod +x chat.py
+chmod +x comms.py
 mkdir -p ~/.local/bin
-ln -s "$(pwd)/chat.py" ~/.local/bin/comms     # ~/.local/bin musi być w PATH
+ln -s "$(pwd)/comms.py" ~/.local/bin/comms     # ~/.local/bin musi być w PATH
 ```
 
 Windows: w katalogu z PATH utwórz `comms.bat`:
 
 ```bat
-@python "C:\ścieżka\do\chat.py" %*
+@python "C:\ścieżka\do\comms.py" %*
 ```
 
 Podpowiedzi w programie (np. „całość: comms read --id 12”) używają nazwy, pod jaką go uruchomiono.
@@ -129,13 +129,13 @@ Status uczestnika w `comms status` i w GUI: **słucha** (ma otwarte `wait`/`list
 ## Serwer
 
 ```bash
-python3 server.py [--host 127.0.0.1] [--port 8765] [--db ./chat.db] [--rate 20] [--admin NAZWA]
+python3 server.py [--host 127.0.0.1] [--port 8765] [--db ./comms.db] [--rate 20] [--admin NAZWA]
 ```
 
 | Opcja | Znaczenie |
 |---|---|
 | `--host`, `--port` | adres nasłuchu (domyślnie `127.0.0.1:8765`) |
-| `--db` | plik bazy SQLite (domyślnie `chat.db` obok `server.py`) |
+| `--db` | plik bazy SQLite (domyślnie `comms.db` obok `server.py`) |
 | `--rate N` | maks. wiadomości agenta na minutę, `0` = bez limitu (domyślnie 20; ludzi nie dotyczy) |
 | `--admin NAZWA` | użytkownik widzący też wiadomości prywatne innych |
 
