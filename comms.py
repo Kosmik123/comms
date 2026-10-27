@@ -423,10 +423,24 @@ def main():
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("--server", default=os.environ.get("CHAT_SERVER", "http://127.0.0.1:8765"))
-    ap.add_argument("--as", dest="name", default="", help="Twoja nazwa (domyślnie CHAT_NAME albo plik .chat-name)")
-    ap.add_argument("--kind", choices=["agent", "human"], default=None, help="rodzaj uczestnika (domyślnie agent)")
+    def global_opts(p, top):
+        # Opcje --server/--as/--kind działają przed komendą i po niej. W podkomendach mają default=SUPPRESS,
+        # żeby niepodane nie nadpisywały wartości z poziomu głównego.
+        sup = argparse.SUPPRESS
+        p.add_argument("--server", default=os.environ.get("CHAT_SERVER", "http://127.0.0.1:8765") if top else sup,
+                       help="adres serwera (domyślnie CHAT_SERVER albo http://127.0.0.1:8765)")
+        p.add_argument("--as", dest="name", default="" if top else sup,
+                       help="Twoja nazwa (domyślnie CHAT_NAME albo plik .chat-name)")
+        p.add_argument("--kind", choices=["agent", "human"], default=None if top else sup,
+                       help="rodzaj uczestnika (domyślnie agent)")
+
+    global_opts(ap, True)
+    sub_opts = argparse.ArgumentParser(add_help=False)
+    global_opts(sub_opts, False)
     sub = ap.add_subparsers(dest="cmd", required=True)
+
+    def add_cmd(name, **kw):
+        return sub.add_parser(name, parents=[sub_opts], **kw)
 
     def common(p, wait_opts=False):
         p.add_argument("--mode", choices=["all", "direct"], default="all", help="direct = tylko prywatne do mnie i @wzmianki")
@@ -437,41 +451,41 @@ def main():
             p.add_argument("--max", type=int, default=20, help="max wiadomości na jedno wywołanie")
             p.add_argument("--since", type=int, default=None, help="nadpisz kursor (id ostatnio widzianej wiadomości)")
 
-    p = sub.add_parser("send", help="wyślij wiadomość")
+    p = add_cmd("send", help="wyślij wiadomość")
     p.add_argument("--to", default="all", help="all (domyślnie) albo nazwa uczestnika")
     p.add_argument("text", nargs="*", help="treść; '-' lub brak = czytaj ze stdin")
     p.set_defaults(fn=cmd_send)
 
-    p = sub.add_parser("read", help="przeczytaj historię (nie rusza kursora)")
+    p = add_cmd("read", help="przeczytaj historię (nie rusza kursora)")
     p.add_argument("--last", type=int, default=20)
     p.add_argument("--since", type=int, default=0)
     p.add_argument("--id", type=int, default=0, help="pokaż w całości wiadomość o tym id")
     common(p)
     p.set_defaults(fn=cmd_read)
 
-    p = sub.add_parser("wait", help="czekaj na nowe wiadomości, wypisz je i zakończ")
+    p = add_cmd("wait", help="czekaj na nowe wiadomości, wypisz je i zakończ")
     p.add_argument("--timeout", type=int, default=300)
     p.add_argument("--peek", action="store_true", help="nie przesuwaj kursora")
     common(p, wait_opts=True)
     p.set_defaults(fn=cmd_wait)
 
-    p = sub.add_parser("listen", help="ciągły strumień: jedna linia na wiadomość")
+    p = add_cmd("listen", help="ciągły strumień: jedna linia na wiadomość")
     common(p, wait_opts=True)
     p.set_defaults(fn=cmd_listen)
 
-    p = sub.add_parser("status", help="kto jest obecny")
+    p = add_cmd("status", help="kto jest obecny")
     p.set_defaults(fn=cmd_status)
 
-    p = sub.add_parser("guide", help="instrukcja dla agenta: jak korzystać z czatu (do wklejenia w prompt)")
+    p = add_cmd("guide", help="instrukcja dla agenta: jak korzystać z czatu (do wklejenia w prompt)")
     p.set_defaults(fn=cmd_guide)
 
-    p = sub.add_parser("shell", help="tryb interaktywny: nazwa w pamięci, polecenia ze stdin, wiadomości na bieżąco")
+    p = add_cmd("shell", help="tryb interaktywny: nazwa w pamięci, polecenia ze stdin, wiadomości na bieżąco")
     p.add_argument("--history", type=int, default=0, help="na starcie pokaż ostatnie N wiadomości")
     p.add_argument("--keep", action="store_true", help="po końcu stdin dalej nasłuchuj (do Ctrl+C)")
     common(p, wait_opts=True)
     p.set_defaults(fn=cmd_shell)
 
-    p = sub.add_parser("login", help="zapamiętaj nazwę w ./.chat-name, żeby pomijać --as")
+    p = add_cmd("login", help="zapamiętaj nazwę w ./.chat-name, żeby pomijać --as")
     p.add_argument("login_name", metavar="NAZWA")
     p.set_defaults(fn=cmd_login)
 

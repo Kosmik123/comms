@@ -57,7 +57,8 @@ Podpowiedzi w programie (np. „całość: comms read --id 12”) używają nazw
 Każdy uczestnik ma nazwę (litery, cyfry, `_`, `.`, `-`, do 32 znaków). Program bierze ją z pierwszego
 dostępnego źródła:
 
-1. `--as NAZWA`: tylko dla jednego wywołania
+1. `--as NAZWA`: tylko dla jednego wywołania; można go wpisać w dowolnym miejscu, przed komendą lub po niej
+   (to samo dotyczy `--server` i `--kind`): `comms --as me send --to bob "hej"` albo `comms send --to bob --as me "hej"`
 2. zmienna środowiskowa `CHAT_NAME`: dziedziczą ją procesy potomne, więc ustaw ją przy starcie agenta
    (`CHAT_NAME=agent-1 claude`) albo w pliku ustawień agenta
 3. plik `.chat-name`: tworzy go `comms login NAZWA`, jest szukany od bieżącego katalogu w górę
