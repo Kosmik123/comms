@@ -8,6 +8,10 @@ Użycie:
   comms.py --as agent-1 read --id 142                # cała treść jednej wiadomości
   comms.py --as agent-1 wait --timeout 300           # blokuje do nowej wiadomości, wypisuje i kończy
   comms.py --as agent-1 listen                       # ciągły strumień, jedna linia na wiadomość (pod Monitor)
+  comms.py --as agent-1 send --to "#dev" "treść"     # do kanału (członkowie kanału)
+  comms.py --as agent-1 join "#dev" --notify mention # dołącz do kanału (all|mention|mute)
+  comms.py --as agent-1 channels                     # kanały, członkowie i moje członkostwo
+  comms.py --as agent-1 read --channel "#dev"        # historia kanału (bez członkostwa)
   comms.py status                                    # kto jest obecny i w jakim stanie
   comms.py --as agent-1 shell                        # tryb interaktywny: nazwa w pamięci, polecenia ze stdin
   comms.py login agent-1                             # zapamiętaj nazwę w ./.chat-name (potem bez --as)
@@ -94,12 +98,20 @@ class Client:
     def send(self, to, body):
         return self._req("POST", "/send", body={"sender": self.name, "recipient": to, "body": body, "kind": self.kind})
 
-    def read(self, after=0, last=0, mode="all", include_own=False):
-        return self._req(
-            "GET",
-            "/read",
-            {"as": self.name, "kind": self.kind, "after": after, "last": last, "mode": mode, "include_own": int(include_own)},
-        )
+    def read(self, after=0, last=0, mode="all", include_own=False, channel=""):
+        params = {"as": self.name, "kind": self.kind, "after": after, "last": last, "mode": mode, "include_own": int(include_own)}
+        if channel:
+            params["channel"] = channel
+        return self._req("GET", "/read", params)
+
+    def join(self, channel, notify):
+        return self._req("POST", "/join", body={"name": self.name, "kind": self.kind, "channel": channel, "notify": notify})
+
+    def leave(self, channel):
+        return self._req("POST", "/leave", body={"name": self.name, "channel": channel})
+
+    def channels(self):
+        return self._req("GET", "/channels", {"as": self.name})["channels"]
 
     def wait(self, after, timeout, mode, batch_ms, limit, include_own):
         return self._req(
@@ -146,11 +158,23 @@ def save_cursor(name, value):
 
 
 # ---------- formatowanie ----------
+def chan(name):
+    """Normalizuje nazwę kanału: 'dev' i '#dev' to ten sam kanał."""
+    return name if name.startswith("#") else "#" + name
+
+
 def fmt(m, me, max_chars):
-    to = "#all" if m["recipient"] == "all" else ("(prywatnie do Ciebie)" if m["recipient"] == me else f"(prywatnie do {m['recipient']})")
+    rcpt = m["recipient"]
+    if rcpt == "all":
+        to = "#all"
+    elif rcpt.startswith("#"):
+        to = rcpt
+    else:
+        to = "(prywatnie do Ciebie)" if rcpt == me else f"(prywatnie do {rcpt})"
     body = " ⏎ ".join(m["body"].splitlines()) if m["body"] else ""
     if max_chars and len(body) > max_chars:
-        body = body[:max_chars].rstrip() + f" … [skrócone, całość: {PROG} read --id {m['id']}]"
+        hint = f" --channel {rcpt}" if rcpt.startswith("#") else ""
+        body = body[:max_chars].rstrip() + f" … [skrócone, całość: {PROG} read --id {m['id']}{hint}]"
     ts = time.strftime("%H:%M:%S", time.localtime(m["ts"]))
     return f"[#{m['id']} {ts}] {m['sender']} → {to}: {body}"
 
@@ -167,14 +191,15 @@ def cmd_send(c, a):
         text = sys.stdin.read().strip()
     if not text:
         die("pusta wiadomość")
-    r = c.send(a.to, text)
-    print(f"wysłano #{r['id']} → {'#all' if a.to == 'all' else a.to}")
+    to = chan(a.channel) if a.channel else a.to
+    r = c.send(to, text)
+    print(f"wysłano #{r['id']} → {'#all' if to == 'all' else to}")
     return EXIT_OK
 
 
-def print_full(c, mid):
+def print_full(c, mid, channel=""):
     """Wypisuje pełną treść wiadomości o danym id. Zwraca False, gdy jej nie ma lub brak dostępu."""
-    r = c.read(after=mid - 1, last=0, mode="all", include_own=True)
+    r = c.read(after=mid - 1, last=0, mode="all", include_own=True, channel=channel)
     for m in r["messages"]:
         if m["id"] == mid:
             print(f"[#{m['id']}] {m['sender']} → {m['recipient']}")
@@ -184,11 +209,12 @@ def print_full(c, mid):
 
 
 def cmd_read(c, a):
+    channel = chan(a.channel) if a.channel else ""
     if a.id:
-        if print_full(c, a.id):
+        if print_full(c, a.id, channel):
             return EXIT_OK
         die(f"nie ma wiadomości #{a.id} (lub nie masz do niej dostępu)")
-    r = c.read(after=a.since, last=a.last, mode=a.mode, include_own=a.own)
+    r = c.read(after=a.since, last=a.last, mode=a.mode, include_own=a.own or bool(channel), channel=channel)
     if not r["messages"]:
         print("(brak wiadomości)")
         return EXIT_TIMEOUT
@@ -241,6 +267,31 @@ def cmd_status(c, a):
     return EXIT_OK
 
 
+def cmd_channels(c, a):
+    chs = c.channels()
+    if not chs:
+        print(f"(brak kanałów; utwórz: {PROG} join \"#nazwa\")")
+        return EXIT_OK
+    for ch in chs:
+        mark = f"[{ch['notify']}]" if ch["joined"] else ""
+        print(f"{ch['channel']:<20} {mark:<10} {', '.join(ch['members']) or '(pusty)'}")
+    return EXIT_OK
+
+
+def cmd_join(c, a):
+    ch = chan(a.channel)
+    c.join(ch, a.notify)
+    print(f"jesteś w {ch} (powiadomienia: {a.notify}); wiadomości z kanału dostaniesz od teraz")
+    return EXIT_OK
+
+
+def cmd_leave(c, a):
+    ch = chan(a.channel)
+    c.leave(ch)
+    print(f"opuszczono {ch}")
+    return EXIT_OK
+
+
 def cmd_login(c, a):
     name = a.login_name
     if not NAME_RE.match(name):
@@ -256,7 +307,8 @@ def cmd_login(c, a):
 AGENT_GUIDE = """\
 KOMUNIKACJA Z INNYMI AGENTAMI I LUDŹMI (program: {prog})
 
-Jesteś uczestnikiem wspólnego czatu. Wiadomości publiczne widzą wszyscy, prywatne tylko adresat.
+Jesteś uczestnikiem wspólnego czatu. Wiadomości publiczne widzą wszyscy, prywatne tylko adresat,
+a kanały (#nazwa) dostają ich członkowie.
 
 TOŻSAMOŚĆ
   Nazwa jest brana z --as, zmiennej CHAT_NAME albo pliku .chat-name (szukanego od bieżącego
@@ -269,7 +321,17 @@ NA STARCIE
 WYSYŁANIE
   {prog} send "tekst"                  publicznie
   {prog} send --to NAZWA "tekst"       prywatnie
+  {prog} send --to "#kanał" "tekst"    do kanału (piszący zostaje jego członkiem)
   echo "dłuższy tekst" | {prog} send   treść ze stdin
+
+KANAŁY (tematy lub role, np. #dev, #reviewers; wszystkie publiczne)
+  {prog} channels                kto jest w jakich kanałach i jak je ustawiłeś
+  {prog} join "#kanał"           dołącz (kanał powstaje sam); dostajesz wiadomości wysłane od teraz
+  {prog} join "#kanał" --notify mention   budź mnie tylko, gdy ktoś napisze @moja_nazwa
+  {prog} join "#kanał" --notify mute      nie budź mnie wcale (historia: read --channel "#kanał")
+  {prog} leave "#kanał"          wyjdź
+  {prog} read --channel "#kanał" --last 20   historia kanału, także bez członkostwa
+  W konsoli cudzysłowy przy #kanał są potrzebne, bo # zaczyna komentarz.
 
 ODBIERANIE (pętla)
   {prog} wait --timeout 300      czeka na nową wiadomość, wypisuje ją i kończy
@@ -452,7 +514,8 @@ def main():
             p.add_argument("--since", type=int, default=None, help="nadpisz kursor (id ostatnio widzianej wiadomości)")
 
     p = add_cmd("send", help="wyślij wiadomość")
-    p.add_argument("--to", default="all", help="all (domyślnie) albo nazwa uczestnika")
+    p.add_argument("--to", default="all", help="all (domyślnie), nazwa uczestnika albo #kanał")
+    p.add_argument("--channel", default="", help="kanał docelowy (to samo co --to \"#kanał\")")
     p.add_argument("text", nargs="*", help="treść; '-' lub brak = czytaj ze stdin")
     p.set_defaults(fn=cmd_send)
 
@@ -460,6 +523,7 @@ def main():
     p.add_argument("--last", type=int, default=20)
     p.add_argument("--since", type=int, default=0)
     p.add_argument("--id", type=int, default=0, help="pokaż w całości wiadomość o tym id")
+    p.add_argument("--channel", default="", help="historia wskazanego kanału (nie wymaga członkostwa)")
     common(p)
     p.set_defaults(fn=cmd_read)
 
@@ -484,6 +548,19 @@ def main():
     p.add_argument("--keep", action="store_true", help="po końcu stdin dalej nasłuchuj (do Ctrl+C)")
     common(p, wait_opts=True)
     p.set_defaults(fn=cmd_shell)
+
+    p = add_cmd("channels", help="lista kanałów, członkowie i moje członkostwo")
+    p.set_defaults(fn=cmd_channels)
+
+    p = add_cmd("join", help="dołącz do kanału (powstaje, jeśli go nie ma)")
+    p.add_argument("channel", metavar="KANAŁ")
+    p.add_argument("--notify", choices=["all", "mention", "mute"], default="all",
+                   help="all = każda wiadomość, mention = tylko @wzmianki, mute = nic (domyślnie all)")
+    p.set_defaults(fn=cmd_join)
+
+    p = add_cmd("leave", help="opuść kanał")
+    p.add_argument("channel", metavar="KANAŁ")
+    p.set_defaults(fn=cmd_leave)
 
     p = add_cmd("login", help="zapamiętaj nazwę w ./.chat-name, żeby pomijać --as")
     p.add_argument("login_name", metavar="NAZWA")

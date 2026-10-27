@@ -6,11 +6,19 @@ Endpointy (JSON):
   GET  /read          ?as=&after=&last=&mode=&include_own=
   GET  /wait          ?as=&after=&timeout=&mode=&batch_ms=&max=&include_own=
   GET  /participants
+  GET  /channels      ?as=                               -> kanały, liczba członków, moje członkostwo
+  POST /join          {name, channel, notify, kind}      -> dołącz (kanał powstaje sam)
+  POST /leave         {name, channel}
   GET  /              GUI (index.html)
 
-recipient: "all" (publicznie) albo nazwa uczestnika (prywatnie).
-mode: "all"    -> publiczne + prywatne do mnie
-      "direct" -> prywatne do mnie + publiczne z @moja_nazwa
+recipient: "all" (wszyscy), nazwa uczestnika (prywatnie) albo "#kanał" (członkowie kanału).
+Kanały są publiczne: każdy może dołączyć, wyjść i przeczytać historię (/read?channel=#kanał).
+notify (per członek kanału): "all"     -> każda wiadomość z kanału trafia do /read i /wait
+                             "mention" -> tylko wiadomości z @moja_nazwa
+                             "mute"    -> nic nie trafia do /read ani /wait (tylko ?channel=)
+Z kanału dostajesz wiadomości wysłane po dołączeniu.
+mode: "all"    -> wszystko, co przewidują członkostwa (publiczne, prywatne, kanały wg notify)
+      "direct" -> prywatne do mnie + publiczne i kanałowe z @moja_nazwa
 after=-1 oznacza "od teraz" (bez starej historii).
 """
 import argparse
@@ -26,6 +34,8 @@ from urllib.parse import parse_qs, urlparse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 NAME_RE = re.compile(r"^[\w.-]{1,32}$")
+CHAN_RE = re.compile(r"^#[\w.-]{1,31}$")
+NOTIFY = ("all", "mention", "mute")
 MAX_BODY = 8000
 BUSY_SECONDS = 600  # tyle czasu od ostatniej aktywności agent jest "zajęty", potem "offline"
 
@@ -61,6 +71,13 @@ class Chat:
                 name TEXT PRIMARY KEY,
                 kind TEXT NOT NULL,
                 last_seen REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS memberships(
+                channel TEXT NOT NULL,
+                name TEXT NOT NULL,
+                notify TEXT NOT NULL,
+                join_id INTEGER NOT NULL,
+                PRIMARY KEY(channel, name));
+            CREATE INDEX IF NOT EXISTS idx_mem_name ON memberships(name);
             """
         )
         for r in con.execute("SELECT name, kind, last_seen FROM participants"):
@@ -125,8 +142,8 @@ class Chat:
     def send(self, sender, recipient, body, kind):
         if not NAME_RE.match(sender or ""):
             raise Err(400, "niepoprawna nazwa nadawcy (litery, cyfry, _ . -, max 32)")
-        if recipient != "all" and not NAME_RE.match(recipient or ""):
-            raise Err(400, "niepoprawny odbiorca")
+        if recipient != "all" and not (NAME_RE.match(recipient or "") or CHAN_RE.match(recipient or "")):
+            raise Err(400, "niepoprawny odbiorca (nazwa, all albo #kanał)")
         body = (body or "").strip()
         if not body:
             raise Err(400, "pusta wiadomość")
@@ -143,6 +160,12 @@ class Chat:
                     raise Err(429, f"limit {self.rate} wiadomości na minutę dla agenta {sender}")
                 q.append(now)
         con = self.connect()
+        if recipient.startswith("#"):  # piszący do kanału zostaje jego członkiem
+            con.execute(
+                "INSERT OR IGNORE INTO memberships(channel, name, notify, join_id) "
+                "VALUES(?,?,'all',(SELECT COALESCE(MAX(id),0) FROM messages))",
+                (recipient, sender),
+            )
         cur = con.execute(
             "INSERT INTO messages(ts, sender, recipient, body) VALUES(?,?,?,?)",
             (time.time(), sender, recipient, body),
@@ -154,26 +177,45 @@ class Chat:
             self.cond.notify_all()
         return mid
 
-    def fetch(self, name, after, mode, include_own, limit):
+    def fetch(self, name, after, mode, include_own, limit, channel=None):
         con = self.connect()
         try:
+            if channel:  # historia kanału: publiczna, bez członkostwa i bez filtrów powiadomień
+                rows = con.execute(
+                    "SELECT * FROM messages WHERE id>? AND recipient=? ORDER BY id", (after, channel)
+                ).fetchall()
+                return [dict(r) for r in rows][:limit]
             if self.admin and name == self.admin:
                 rows = con.execute(
                     "SELECT * FROM messages WHERE id>? ORDER BY id LIMIT ?", (after, limit)
                 ).fetchall()
                 return [dict(r) for r in rows]
             mention = re.compile(r"@" + re.escape(name) + r"(?![\w-])", re.I)
+            member = {
+                r["channel"]: (r["notify"], r["join_id"])
+                for r in con.execute("SELECT channel, notify, join_id FROM memberships WHERE name=?", (name,))
+            }
             out = []
             cur = con.execute(
-                "SELECT * FROM messages WHERE id>? AND (recipient='all' OR recipient=? OR sender=?) ORDER BY id",
+                "SELECT * FROM messages WHERE id>? AND (recipient='all' OR recipient=? OR sender=? "
+                "OR recipient LIKE '#%') ORDER BY id",
                 (after, name, name),
             )
             for r in cur:
+                rcpt = r["recipient"]
                 if r["sender"] == name:
                     ok = include_own
-                elif r["recipient"] not in ("all", name):
+                elif rcpt.startswith("#"):
+                    m = member.get(rcpt)
+                    if m is None or r["id"] <= m[1] or m[0] == "mute":
+                        ok = False
+                    elif m[0] == "mention" or mode == "direct":
+                        ok = bool(mention.search(r["body"]))
+                    else:
+                        ok = True
+                elif rcpt not in ("all", name):
                     ok = False
-                elif mode == "direct" and r["recipient"] != name:
+                elif mode == "direct" and rcpt != name:
                     ok = bool(mention.search(r["body"]))
                 else:
                     ok = True
@@ -182,6 +224,50 @@ class Chat:
                     if len(out) >= limit:
                         break
             return out
+        finally:
+            con.close()
+
+    # ---------- kanały ----------
+    def join(self, name, kind, channel, notify):
+        if not NAME_RE.match(name or ""):
+            raise Err(400, "niepoprawna nazwa uczestnika")
+        if not CHAN_RE.match(channel or ""):
+            raise Err(400, "niepoprawna nazwa kanału (zaczyna się od #, litery, cyfry, _ . -, max 32)")
+        if notify not in NOTIFY:
+            raise Err(400, "notify musi być: " + ", ".join(NOTIFY))
+        self.touch(name, kind)
+        con = self.connect()
+        # ponowne dołączenie zmienia tylko poziom powiadomień, join_id zostaje
+        con.execute(
+            "INSERT INTO memberships(channel, name, notify, join_id) "
+            "VALUES(?,?,?,(SELECT COALESCE(MAX(id),0) FROM messages)) "
+            "ON CONFLICT(channel, name) DO UPDATE SET notify=excluded.notify",
+            (channel, name, notify),
+        )
+        con.commit()
+        con.close()
+
+    def leave(self, name, channel):
+        con = self.connect()
+        cur = con.execute("DELETE FROM memberships WHERE channel=? AND name=?", (channel, name))
+        con.commit()
+        con.close()
+        if not cur.rowcount:
+            raise Err(404, f"nie jesteś w kanale {channel}")
+
+    def channels(self, name):
+        con = self.connect()
+        try:
+            mine = {r["channel"]: r["notify"] for r in con.execute("SELECT channel, notify FROM memberships WHERE name=?", (name,))}
+            members = {}
+            for r in con.execute("SELECT channel, name FROM memberships ORDER BY name"):
+                members.setdefault(r["channel"], []).append(r["name"])
+            for r in con.execute("SELECT DISTINCT recipient FROM messages WHERE recipient LIKE '#%'"):
+                members.setdefault(r["recipient"], [])
+            return [
+                {"channel": c, "members": ms, "joined": c in mine, "notify": mine.get(c, "")}
+                for c, ms in sorted(members.items())
+            ]
         finally:
             con.close()
 
@@ -267,6 +353,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, f.read(), "text/html; charset=utf-8")
         if u.path == "/participants":
             return self._send(200, {"participants": chat.participants()})
+        if u.path == "/channels":
+            name = q.get("as", "")
+            if name and not NAME_RE.match(name):
+                raise Err(400, "niepoprawny parametr as=")
+            return self._send(200, {"channels": chat.channels(name)})
         if u.path in ("/read", "/wait"):
             name = q.get("as", "")
             if not NAME_RE.match(name):
@@ -282,7 +373,10 @@ class Handler(BaseHTTPRequestHandler):
                 chat.touch(name, kind)
                 after = self._int(q, "after", 0)
                 last = self._int(q, "last", 0)
-                msgs = chat.fetch(name, after, mode, include_own, 10**9)
+                channel = q.get("channel", "")
+                if channel and not CHAN_RE.match(channel):
+                    raise Err(400, "niepoprawny kanał (np. channel=#dev)")
+                msgs = chat.fetch(name, after, mode, include_own, 10**9, channel or None)
                 if last > 0:
                     msgs = msgs[-last:]
                 head = chat.max_id()
@@ -297,7 +391,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _post(self):
         u = urlparse(self.path)
-        if u.path != "/send":
+        if u.path not in ("/send", "/join", "/leave"):
             raise Err(404, "nie ma takiego endpointu")
         length = int(self.headers.get("Content-Length", "0") or 0)
         if length > 64 * 1024:
@@ -309,6 +403,12 @@ class Handler(BaseHTTPRequestHandler):
         kind = data.get("kind", "agent")
         if kind not in ("agent", "human"):
             raise Err(400, "kind musi być agent lub human")
+        if u.path == "/join":
+            self.chat.join(data.get("name", ""), kind, data.get("channel", ""), data.get("notify", "all"))
+            return self._send(200, {"ok": True})
+        if u.path == "/leave":
+            self.chat.leave(data.get("name", ""), data.get("channel", ""))
+            return self._send(200, {"ok": True})
         mid = self.chat.send(data.get("sender", ""), data.get("recipient", "all") or "all", data.get("body", ""), kind)
         self._send(200, {"id": mid})
 

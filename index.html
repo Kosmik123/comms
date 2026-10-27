@@ -49,6 +49,15 @@
   .body { white-space: pre-wrap; word-wrap: anywhere; }
   .body mark { background: var(--mention); color: inherit; border-radius: 3px; padding: 0 2px; }
   .empty { margin: auto; color: var(--muted); }
+  .chan { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 8px; font-size: 14px; }
+  .chan.sel { background: var(--me); }
+  .chan .name { flex: 1; text-align: left; background: none; border: 0; padding: 0; cursor: pointer; color: inherit; font: inherit; }
+  .chan select { padding: 2px 4px; font-size: 12px; }
+  .chan button.link { font-size: 12px; }
+  .chan small { color: var(--muted); font-size: 12px; }
+  .chanform { border: 0; background: none; padding: 6px 0 18px; display: flex; gap: 6px; }
+  .chanform input { flex: 1; min-width: 0; padding: 6px 8px; }
+  .chanform button.send { padding: 6px 10px; }
   form { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 16px; display: flex; gap: 10px; align-items: flex-end; }
   select, textarea, input, button { font: inherit; color: inherit; }
   select, input { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
@@ -69,6 +78,12 @@
 <body>
 <aside>
   <div class="who">Jako: <b id="me"></b><button class="link" id="rename">zmień</button></div>
+  <h2>Kanały</h2>
+  <div id="channels"></div>
+  <form id="chanForm" class="chanform">
+    <input id="chanName" maxlength="32" placeholder="#nazwa" autocomplete="off">
+    <button class="send" type="submit">Dołącz</button>
+  </form>
   <h2>Uczestnicy</h2>
   <div id="people"></div>
 </aside>
@@ -97,6 +112,9 @@
   let loopToken = 0;
   const seen = new Set();
   let people = [];
+  let channels = [];
+  let channelsSig = "";
+  const CHAN_RE = /^#[\w.-]{1,31}$/;
 
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -159,12 +177,14 @@
       if (seen.has(m.id)) continue;
       seen.add(m.id);
       if (empty && empty.parentNode) empty.remove();
-      const priv = m.recipient !== "all";
+      const inChan = m.recipient.startsWith("#");
+      const priv = m.recipient !== "all" && !inChan;
       const box = el("div", "msg" + (m.sender === me ? " me" : "") + (priv ? " private" : ""));
       const meta = el("div", "meta");
       meta.append(el("b", null, m.sender));
       const k = kindOf(m.sender);
       if (k) meta.append(el("span", "tag", k === "human" ? "człowiek" : "agent"));
+      if (inChan) meta.append(el("span", "tag", m.recipient));
       if (priv) meta.append(el("span", "tag", "prywatnie → " + m.recipient));
       meta.append(el("span", null, new Date(m.ts * 1000).toLocaleTimeString("pl-PL")));
       box.append(meta, renderBody(m.body));
@@ -192,16 +212,78 @@
     sel.textContent = "";
     const opt = (v, t) => { const o = el("option", null, t); o.value = v; return o; };
     sel.append(opt("all", "do wszystkich"));
+    for (const c of channels) if (c.joined) sel.append(opt(c.channel, "kanał " + c.channel));
     for (const p of people) if (p.name !== me) sel.append(opt(p.name, "prywatnie → " + p.name));
     sel.value = [...sel.options].some((o) => o.value === prev) ? prev : "all";
   }
+  function renderChannels() {
+    const box = $("channels");
+    box.textContent = "";
+    const to = $("to").value;
+    for (const c of channels) {
+      const row = el("div", "chan" + (to === c.channel ? " sel" : ""));
+      const name = el("button", "name", c.channel);
+      name.type = "button";
+      if (c.joined) {
+        name.title = "Wyślij do tego kanału";
+        name.onclick = () => { $("to").value = c.channel; renderChannels(); $("text").focus(); };
+        const nf = el("select");
+        nf.title = "Powiadomienia: wszystkie / tylko @wzmianki / wyciszony";
+        for (const [v, t] of [["all", "wszystkie"], ["mention", "@wzmianki"], ["mute", "cisza"]]) {
+          const o = el("option", null, t); o.value = v; nf.append(o);
+        }
+        nf.value = c.notify;
+        nf.onchange = () => chanCall("/join", { name: me, kind: "human", channel: c.channel, notify: nf.value });
+        const out = el("button", "link", "wyjdź");
+        out.type = "button";
+        out.onclick = () => chanCall("/leave", { name: me, channel: c.channel });
+        row.append(name, nf, out);
+      } else {
+        name.title = "Pokaż historię kanału";
+        const n = el("small", null, c.members.length + " os.");
+        const inn = el("button", "link", "dołącz");
+        inn.type = "button";
+        inn.onclick = () => chanCall("/join", { name: me, kind: "human", channel: c.channel, notify: "all" });
+        row.append(name, n, inn);
+      }
+      box.append(row);
+    }
+    if (!channels.length) box.append(el("div", "empty", "Brak kanałów."));
+  }
+  async function chanCall(path, body) {
+    try {
+      await api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      $("err").textContent = "";
+      await refreshChannels();
+    } catch (e) { $("err").textContent = "Kanały: " + e.message; }
+  }
+  async function refreshChannels() {
+    try {
+      const next = (await api("/channels?" + new URLSearchParams({ as: me }))).channels;
+      const sig = JSON.stringify(next);
+      if (sig === channelsSig) return;  // bez zmian: nie przebudowuj (zamknęłoby otwarte menu)
+      channelsSig = sig;
+      channels = next;
+      renderPeople();
+      renderChannels();
+    } catch (e) { /* przejściowy błąd */ }
+  }
+  $("chanForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    let v = $("chanName").value.trim();
+    if (v && !v.startsWith("#")) v = "#" + v;
+    if (!CHAN_RE.test(v)) { $("chanName").style.borderColor = "#c0392b"; return; }
+    $("chanName").style.borderColor = "";
+    $("chanName").value = "";
+    chanCall("/join", { name: me, kind: "human", channel: v, notify: "all" }).then(() => { $("to").value = v; renderChannels(); });
+  });
   async function refreshPeople() {
     try {
       people = (await api("/participants")).participants;
       renderPeople();
     } catch (e) { /* przejściowy błąd, spróbujemy za chwilę */ }
   }
-  $("to").addEventListener("change", renderPeople);
+  $("to").addEventListener("change", () => { renderPeople(); renderChannels(); });
 
   // ---------- pętla odbioru ----------
   async function loop(token) {
@@ -229,10 +311,12 @@
     store.set("chat_name", me);
     $("me").textContent = me;
     loopToken++;
+    channelsSig = "";
     seen.clear();
     $("log").textContent = "";
     $("log").append(el("div", "empty", "Ładowanie…"));
     await refreshPeople();
+    await refreshChannels();
     try {
       const q = new URLSearchParams({ as: me, kind: "human", last: 200, include_own: 1, mode: "all" });
       const r = await api("/read?" + q);
@@ -275,6 +359,7 @@
   });
 
   setInterval(refreshPeople, 5000);
+  setInterval(() => { if (me) refreshChannels(); }, 5000);
   const saved = store.get("chat_name");
   if (saved && NAME_RE.test(saved)) start(saved); else askName();
 })();
