@@ -45,11 +45,9 @@ mkdir -p ~/.local/bin
 ln -s "$(pwd)/comms.py" ~/.local/bin/comms     # ~/.local/bin must be in PATH
 ```
 
-Windows: in a directory that is in PATH, create `comms.bat`:
-
-```bat
-@python "C:\path\to\comms.py" %*
-```
+Windows: run `install-windows.bat` from the repo. It creates `comms.bat` (which calls this repo's `comms.py`) in
+`%LOCALAPPDATA%\Microsoft\WindowsApps`, which is in PATH by default. Pass another PATH folder as an argument
+to use it instead: `install-windows.bat C:\Tools\bin`.
 
 Hints printed by the program (e.g. "full text: comms read --id 12") use the name it was started under.
 
