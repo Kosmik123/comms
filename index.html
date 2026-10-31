@@ -28,6 +28,7 @@
   aside h2 { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
   .who { margin-bottom: 18px; font-size: 14px; }
   .who button { margin-left: 6px; }
+  .who select.lang { margin-left: 8px; padding: 1px 4px; font-size: 12px; }
   .person {
     display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
     background: none; border: 0; padding: 6px 8px; border-radius: 8px; cursor: pointer; color: inherit; font: inherit;
@@ -77,49 +78,101 @@
 </head>
 <body>
 <aside>
-  <div class="who">Jako: <b id="me"></b><button class="link" id="rename">zmień</button></div>
-  <h2>Kanały</h2>
+  <div class="who"><span data-i18n="as">Jako:</span> <b id="me"></b><button class="link" id="rename" data-i18n="rename">zmień</button>
+    <select id="lang" class="lang" title="Język / Language"><option value="pl">PL</option><option value="en">EN</option></select></div>
+  <h2 data-i18n="channels">Kanały</h2>
   <div id="channels"></div>
   <form id="chanForm" class="chanform">
-    <input id="chanName" maxlength="32" placeholder="#nazwa" autocomplete="off">
-    <button class="send" type="submit">Dołącz</button>
+    <input id="chanName" maxlength="32" data-i18n-ph="chanPh" placeholder="#nazwa" autocomplete="off">
+    <button class="send" type="submit" data-i18n="join">Dołącz</button>
   </form>
-  <h2>Uczestnicy</h2>
+  <h2 data-i18n="people">Uczestnicy</h2>
   <div id="people"></div>
 </aside>
 <main>
-  <div id="log"><div class="empty">Ładowanie…</div></div>
+  <div id="log"><div class="empty" data-i18n="loading">Ładowanie…</div></div>
   <div id="err"></div>
   <form id="form">
-    <select id="to" title="Odbiorca"></select>
-    <textarea id="text" rows="1" placeholder="Napisz wiadomość (Enter wysyła, Shift+Enter nowa linia)"></textarea>
-    <button class="send" type="submit">Wyślij</button>
+    <select id="to" data-i18n-title="recipient" title="Odbiorca"></select>
+    <textarea id="text" rows="1" data-i18n-ph="msgPh" placeholder="Napisz wiadomość (Enter wysyła, Shift+Enter nowa linia)"></textarea>
+    <button class="send" type="submit" data-i18n="send">Wyślij</button>
   </form>
 </main>
 <div id="login"><div>
-  <h1>Jak masz na imię?</h1>
-  <input id="nameInput" maxlength="32" placeholder="np. ania" autocomplete="off">
-  <button class="send" id="nameOk" style="width:100%">Wejdź do czatu</button>
-  <p style="color:var(--muted);font-size:13px;margin:10px 0 0">Litery, cyfry oraz _ . - (max 32 znaki).</p>
+  <h1 data-i18n="askName">Jak masz na imię?</h1>
+  <input id="nameInput" maxlength="32" data-i18n-ph="namePh" placeholder="np. ania" autocomplete="off">
+  <button class="send" id="nameOk" style="width:100%" data-i18n="enter">Wejdź do czatu</button>
+  <p style="color:var(--muted);font-size:13px;margin:10px 0 0" data-i18n="nameHint">Litery, cyfry oraz _ . - (max 32 znaki).</p>
 </div></div>
 
 <script>
 (() => {
-  const NAME_RE = /^[\w.-]{1,32}$/;
+  // \w w JS to tylko ASCII, a serwer (Python) przyjmuje litery Unicode, więc tu też: litery, cyfry, _ . -
+  const NAME_RE = /^[\p{L}\p{N}_.-]{1,32}$/u;
   const $ = (id) => document.getElementById(id);
   let me = "";
   let cursor = 0;
   let loopToken = 0;
   const seen = new Set();
+  const history = [];  // wiadomości widoczne w oknie; potrzebne do przerysowania po zmianie języka
+  let logState = "loading";
   let people = [];
   let channels = [];
   let channelsSig = "";
-  const CHAN_RE = /^#[\w.-]{1,31}$/;
+  const CHAN_RE = /^#[\p{L}\p{N}_.-]{1,31}$/u;
 
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
     set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
   };
+
+  // ---------- język ----------
+  const I18N = {
+    pl: {
+      as: "Jako:", rename: "zmień", channels: "Kanały", people: "Uczestnicy", join: "Dołącz", send: "Wyślij",
+      chanPh: "#nazwa", msgPh: "Napisz wiadomość (Enter wysyła, Shift+Enter nowa linia)", recipient: "Odbiorca",
+      askName: "Jak masz na imię?", namePh: "np. ania", enter: "Wejdź do czatu",
+      nameHint: "Litery, cyfry oraz _ . - (max 32 znaki).",
+      loading: "Ładowanie…", noMessages: "Jeszcze nic tu nie ma. Napisz pierwszą wiadomość.",
+      human: "człowiek", agent: "agent", privateTo: "prywatnie → ", toAll: "do wszystkich", channelOpt: "kanał ",
+      st_listening: "słucha", st_busy: "zajęty", st_offline: "offline", nobody: "Nikogo poza Tobą.",
+      sendToChan: "Wyślij do tego kanału", notifyTitle: "Powiadomienia: wszystkie / tylko @wzmianki / wyciszony",
+      n_all: "wszystkie", n_mention: "@wzmianki", n_mute: "cisza", leave: "wyjdź", join1: "dołącz",
+      showHistory: "Pokaż historię kanału", members: " os.", member1: " os.", noChannels: "Brak kanałów.",
+      title: "COMMS - Czat agentów",
+      errChannels: "Kanały: ", errConn: "Brak połączenia z serwerem, ponawiam… (", errHistory: "Nie udało się wczytać historii: ",
+      errSend: "Nie wysłano: ", locale: "pl-PL",
+    },
+    en: {
+      as: "As:", rename: "change", channels: "Channels", people: "Participants", join: "Join", send: "Send",
+      chanPh: "#name", msgPh: "Write a message (Enter sends, Shift+Enter new line)", recipient: "Recipient",
+      askName: "What is your name?", namePh: "e.g. ann", enter: "Enter the chat",
+      nameHint: "Letters, digits and _ . - (max 32 characters).",
+      loading: "Loading…", noMessages: "Nothing here yet. Write the first message.",
+      human: "human", agent: "agent", privateTo: "private → ", toAll: "to everyone", channelOpt: "channel ",
+      st_listening: "listening", st_busy: "busy", st_offline: "offline", nobody: "Nobody but you.",
+      sendToChan: "Send to this channel", notifyTitle: "Notifications: all / only @mentions / muted",
+      n_all: "all", n_mention: "@mentions", n_mute: "muted", leave: "leave", join1: "join",
+      showHistory: "Show channel history", members: " members", member1: " member", noChannels: "No channels.",
+      title: "COMMS - Agent chat",
+      errChannels: "Channels: ", errConn: "No connection to the server, retrying… (", errHistory: "Could not load history: ",
+      errSend: "Not sent: ", locale: "en-GB",
+    },
+  };
+  let lang = (() => {
+    const s = store.get("chat_lang");
+    if (s && I18N[s]) return s;
+    return (navigator.language || "").toLowerCase().startsWith("pl") ? "pl" : "en";
+  })();
+  const t = (k) => I18N[lang][k] !== undefined ? I18N[lang][k] : k;
+  function applyStatic() {
+    document.documentElement.lang = lang;
+    document.title = t("title");
+    for (const n of document.querySelectorAll("[data-i18n]")) n.textContent = t(n.dataset.i18n);
+    for (const n of document.querySelectorAll("[data-i18n-ph]")) n.placeholder = t(n.dataset.i18nPh);
+    for (const n of document.querySelectorAll("[data-i18n-title]")) n.title = t(n.dataset.i18nTitle);
+    $("lang").value = lang;
+  }
 
   async function api(path, opts) {
     const r = await fetch(path, opts);
@@ -154,7 +207,7 @@
   }
   function renderBody(text) {
     const box = el("div", "body");
-    const re = new RegExp("@[\\w.-]+", "g");
+    const re = /@[\p{L}\p{N}_.-]+/gu;
     let last = 0, m;
     while ((m = re.exec(text)) !== null) {
       box.append(document.createTextNode(text.slice(last, m.index)));
@@ -169,6 +222,20 @@
     const p = people.find((x) => x.name === name);
     return p ? p.kind : "";
   }
+  function buildMsg(m) {
+    const inChan = m.recipient.startsWith("#");
+    const priv = m.recipient !== "all" && !inChan;
+    const box = el("div", "msg" + (m.sender === me ? " me" : "") + (priv ? " private" : ""));
+    const meta = el("div", "meta");
+    meta.append(el("b", null, m.sender));
+    const k = kindOf(m.sender);
+    if (k) meta.append(el("span", "tag", t(k === "human" ? "human" : "agent")));
+    if (inChan) meta.append(el("span", "tag", m.recipient));
+    if (priv) meta.append(el("span", "tag", t("privateTo") + m.recipient));
+    meta.append(el("span", null, new Date(m.ts * 1000).toLocaleTimeString(t("locale"))));
+    box.append(meta, renderBody(m.body));
+    return box;
+  }
   function addMessages(msgs) {
     const log = $("log");
     const stick = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
@@ -176,44 +243,42 @@
     for (const m of msgs) {
       if (seen.has(m.id)) continue;
       seen.add(m.id);
+      history.push(m);
       if (empty && empty.parentNode) empty.remove();
-      const inChan = m.recipient.startsWith("#");
-      const priv = m.recipient !== "all" && !inChan;
-      const box = el("div", "msg" + (m.sender === me ? " me" : "") + (priv ? " private" : ""));
-      const meta = el("div", "meta");
-      meta.append(el("b", null, m.sender));
-      const k = kindOf(m.sender);
-      if (k) meta.append(el("span", "tag", k === "human" ? "człowiek" : "agent"));
-      if (inChan) meta.append(el("span", "tag", m.recipient));
-      if (priv) meta.append(el("span", "tag", "prywatnie → " + m.recipient));
-      meta.append(el("span", null, new Date(m.ts * 1000).toLocaleTimeString("pl-PL")));
-      box.append(meta, renderBody(m.body));
-      log.append(box);
+      log.append(buildMsg(m));
     }
+    if (stick) log.scrollTop = log.scrollHeight;
+  }
+  // Placeholder w oknie rozmowy zależy od stanu: ładowanie albo pusta rozmowa.
+  function renderLog() {
+    const log = $("log");
+    const stick = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+    log.textContent = "";
+    if (!history.length) log.append(el("div", "empty", t(logState === "loading" ? "loading" : "noMessages")));
+    for (const m of history) log.append(buildMsg(m));
     if (stick) log.scrollTop = log.scrollHeight;
   }
   function renderPeople() {
     const box = $("people");
     box.textContent = "";
     const to = $("to").value || "all";
-    const labels = { listening: "słucha", busy: "zajęty", offline: "offline" };
     for (const p of people) {
       if (p.name === me) continue;
       const b = el("button", "person" + (to === p.name ? " sel" : ""));
       b.type = "button";
-      b.append(el("span", "dot " + p.status), el("span", null, p.name + (p.kind === "human" ? " 👤" : "")), el("small", null, labels[p.status] || p.status));
+      b.append(el("span", "dot " + p.status), el("span", null, p.name + (p.kind === "human" ? " 👤" : "")), el("small", null, t("st_" + p.status)));
       b.onclick = () => { $("to").value = p.name; renderPeople(); $("text").focus(); };
       box.append(b);
     }
-    if (!box.children.length) box.append(el("div", "empty", "Nikogo poza Tobą."));
+    if (!box.children.length) box.append(el("div", "empty", t("nobody")));
     // lista odbiorców
     const sel = $("to");
     const prev = sel.value || "all";
     sel.textContent = "";
     const opt = (v, t) => { const o = el("option", null, t); o.value = v; return o; };
-    sel.append(opt("all", "do wszystkich"));
-    for (const c of channels) if (c.joined) sel.append(opt(c.channel, "kanał " + c.channel));
-    for (const p of people) if (p.name !== me) sel.append(opt(p.name, "prywatnie → " + p.name));
+    sel.append(opt("all", t("toAll")));
+    for (const c of channels) if (c.joined) sel.append(opt(c.channel, t("channelOpt") + c.channel));
+    for (const p of people) if (p.name !== me) sel.append(opt(p.name, t("privateTo") + p.name));
     sel.value = [...sel.options].some((o) => o.value === prev) ? prev : "all";
   }
   function renderChannels() {
@@ -225,37 +290,37 @@
       const name = el("button", "name", c.channel);
       name.type = "button";
       if (c.joined) {
-        name.title = "Wyślij do tego kanału";
+        name.title = t("sendToChan");
         name.onclick = () => { $("to").value = c.channel; renderChannels(); $("text").focus(); };
         const nf = el("select");
-        nf.title = "Powiadomienia: wszystkie / tylko @wzmianki / wyciszony";
-        for (const [v, t] of [["all", "wszystkie"], ["mention", "@wzmianki"], ["mute", "cisza"]]) {
-          const o = el("option", null, t); o.value = v; nf.append(o);
+        nf.title = t("notifyTitle");
+        for (const v of ["all", "mention", "mute"]) {
+          const o = el("option", null, t("n_" + v)); o.value = v; nf.append(o);
         }
         nf.value = c.notify;
         nf.onchange = () => chanCall("/join", { name: me, kind: "human", channel: c.channel, notify: nf.value });
-        const out = el("button", "link", "wyjdź");
+        const out = el("button", "link", t("leave"));
         out.type = "button";
         out.onclick = () => chanCall("/leave", { name: me, channel: c.channel });
         row.append(name, nf, out);
       } else {
-        name.title = "Pokaż historię kanału";
-        const n = el("small", null, c.members.length + " os.");
-        const inn = el("button", "link", "dołącz");
+        name.title = t("showHistory");
+        const n = el("small", null, c.members.length + t(c.members.length === 1 ? "member1" : "members"));
+        const inn = el("button", "link", t("join1"));
         inn.type = "button";
         inn.onclick = () => chanCall("/join", { name: me, kind: "human", channel: c.channel, notify: "all" });
         row.append(name, n, inn);
       }
       box.append(row);
     }
-    if (!channels.length) box.append(el("div", "empty", "Brak kanałów."));
+    if (!channels.length) box.append(el("div", "empty", t("noChannels")));
   }
   async function chanCall(path, body) {
     try {
       await api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       $("err").textContent = "";
       await refreshChannels();
-    } catch (e) { $("err").textContent = "Kanały: " + e.message; }
+    } catch (e) { $("err").textContent = t("errChannels") + e.message; }
   }
   async function refreshChannels() {
     try {
@@ -299,7 +364,7 @@
         backoff = 1000;
       } catch (e) {
         if (token !== loopToken) return;
-        $("err").textContent = "Brak połączenia z serwerem, ponawiam… (" + e.message + ")";
+        $("err").textContent = t("errConn") + e.message + ")";
         await new Promise((res) => setTimeout(res, backoff));
         backoff = Math.min(backoff * 2, 15000);
       }
@@ -313,20 +378,21 @@
     loopToken++;
     channelsSig = "";
     seen.clear();
-    $("log").textContent = "";
-    $("log").append(el("div", "empty", "Ładowanie…"));
+    history.length = 0;
+    logState = "loading";
+    renderLog();
     await refreshPeople();
     await refreshChannels();
     try {
       const q = new URLSearchParams({ as: me, kind: "human", last: 200, include_own: 1, mode: "all" });
       const r = await api("/read?" + q);
-      $("log").textContent = "";
-      if (!r.messages.length) $("log").append(el("div", "empty", "Jeszcze nic tu nie ma. Napisz pierwszą wiadomość."));
+      logState = "ready";
+      renderLog();
       addMessages(r.messages);
       cursor = r.last_id;
       $("log").scrollTop = $("log").scrollHeight;
     } catch (e) {
-      $("err").textContent = "Nie udało się wczytać historii: " + e.message;
+      $("err").textContent = t("errHistory") + e.message;
     }
     loop(loopToken);
   }
@@ -346,7 +412,7 @@
       ta.style.height = "auto";
       $("err").textContent = "";
     } catch (e) {
-      $("err").textContent = "Nie wysłano: " + e.message;
+      $("err").textContent = t("errSend") + e.message;
     }
   }
   $("form").addEventListener("submit", (e) => { e.preventDefault(); send(); });
@@ -357,6 +423,17 @@
     e.target.style.height = "auto";
     e.target.style.height = Math.min(e.target.scrollHeight, 160) + "px";
   });
+
+  $("lang").addEventListener("change", () => {
+    lang = $("lang").value;
+    store.set("chat_lang", lang);
+    $("err").textContent = "";
+    applyStatic();
+    renderPeople();
+    renderChannels();
+    renderLog();
+  });
+  applyStatic();
 
   setInterval(refreshPeople, 5000);
   setInterval(() => { if (me) refreshChannels(); }, 5000);

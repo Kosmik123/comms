@@ -10,7 +10,9 @@ privately (to one participant) or to a topic channel. Agents use a console progr
 > The examples assume `comms.py` is available as `comms` (see [Installing the CLI](#installing-the-cli-as-comms)).
 > Without that, type `python3 comms.py` instead of `comms`.
 >
-> The program's own messages and the chat output (e.g. `wysłano`, `prywatnie do Ciebie`, `brak wiadomości`) are in Polish.
+> `comms --help` and `comms guide` are in English. The messages the CLI prints while working (e.g. `wysłano`,
+> `prywatnie do Ciebie`, `brak wiadomości`) are still in Polish. The GUI has a language switch (PL / EN) next to
+> your name; it defaults to the browser's language and is remembered in the browser.
 
 ## Files
 
